@@ -38,6 +38,11 @@ modelo:
   # Modelo por defecto (--modelo lo cambia) e hiperparámetros de cada tipo.
   tipo: random_forest
   hiperparametros:
+    perfil_historico:
+      claves: [hr, workingday]
+    ridge:
+      alpha: 1.0
+      categoricas: [hr, mnth]
     random_forest:
       n_estimators: 300
       min_samples_leaf: 2
@@ -53,6 +58,19 @@ modelo:
       learning_rate: 0.1
       max_depth: 5
       random_state: 42
+    hist_gradient_boosting:
+      objetivo_log: true        # entrena con log1p(cnt) y predice con expm1
+      learning_rate: 0.1
+      max_iter: 300
+      random_state: 42
+
+# Escalones de complejidad (make escalones). Gana el de menor costo medio por hora
+# en validación (con su propio factor) y, en empate, el de menor MAE. Nunca 2012.
+escalones:
+  orden: [perfil_historico, ridge, random_forest, hist_gradient_boosting]
+  busqueda:
+    hist_gradient_boosting:
+      learning_rate: [0.05, 0.1, 0.2]
 
 mlflow:
   experimento: demanda-bicis-c5

@@ -4,8 +4,15 @@
   "rmse_validacion": 54.02,
   "error_medio_validacion": 14.594,
   "mae_referencia_promedio_hora": 43.71,
+  "costo_medio_hora_validacion": 52.521,
+  "factor_ajuste": 0.08,
+  "costo_medio_hora_validacion_ajustado": 49.946,
+  "costos_supuestos": {
+    "faltante": 3.0,
+    "sobrante": 1.0
+  },
   "cnt_medio_validacion": 117.845,
-  "latencia_p95_ms_dia": 108.03,
+  "latencia_p95_ms_dia": 108.98,
   "modelo_tamano_mb": 20.63,
   "filas_entrenamiento": 7904,
   "filas_validacion": 741,

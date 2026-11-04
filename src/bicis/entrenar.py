@@ -42,23 +42,15 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import ExtraTreesRegressor, GradientBoostingRegressor, RandomForestRegressor
+from sklearn.inspection import permutation_importance
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.pipeline import Pipeline
 
-from bicis import config, costos
+from bicis import config, costos, modelos
 from bicis.transformar import columnas_salida
 
-MODELOS = {
-    "random_forest": RandomForestRegressor,
-    "extra_trees": ExtraTreesRegressor,
-    "gradient_boosting": GradientBoostingRegressor,
-}
-
-# Tipos que skops no carga por defecto y que confiamos porque el archivo lo
-# generamos nosotros. Es el único que necesitan los tres modelos; no se agrega
-# nada más de forma automática.
-TIPOS_CONFIABLES_SKOPS = ["sklearn.tree._tree.Tree"]
+MODELOS = modelos.CONSTRUCTORES
+TIPOS_CONFIABLES_SKOPS = modelos.TIPOS_CONFIABLES_SKOPS
 
 
 # --------------------------------------------------------------------- datos
@@ -87,10 +79,10 @@ def huella(df: pd.DataFrame) -> str:
 
 # -------------------------------------------------------------------- modelo
 
-def construir(tipo: str, hiperparametros: dict):
+def construir(tipo: str, hiperparametros: dict, features: list[str] | None = None):
     if tipo not in MODELOS:
         raise ValueError(f"Modelo desconocido {tipo!r}. Opciones: {sorted(MODELOS)}")
-    return MODELOS[tipo](**hiperparametros)
+    return MODELOS[tipo](hiperparametros, features or config.features())
 
 
 def posprocesar(pred: np.ndarray) -> np.ndarray:
@@ -129,8 +121,15 @@ def latencia_p95_ms(predictor, X_dia: pd.DataFrame, repeticiones: int) -> float:
     return float(np.percentile(tiempos, 95))
 
 
-def importancias(modelo, feats: list[str]) -> pd.DataFrame:
-    return (pd.DataFrame({"feature": feats, "importancia": modelo.feature_importances_})
+def importancias(modelo, feats: list[str], X_val: pd.DataFrame, y_val: pd.Series) -> pd.DataFrame:
+    """Importancia por impureza si el modelo la tiene; si no, por permutación en validación."""
+    if hasattr(modelo, "feature_importances_"):
+        valores, metodo = modelo.feature_importances_, "impureza"
+    else:
+        r = permutation_importance(modelo, X_val[feats], y_val, n_repeats=5, random_state=0,
+                                   scoring="neg_mean_absolute_error")
+        valores, metodo = r.importances_mean, "permutacion_mae"
+    return (pd.DataFrame({"feature": feats, "importancia": valores, "metodo": metodo})
             .sort_values("importancia", ascending=False, ignore_index=True))
 
 
@@ -167,7 +166,7 @@ def graficas(carpeta: Path, val: pd.DataFrame, pred: np.ndarray, mae_hora: pd.Da
     fig, ax = plt.subplots(figsize=(7, 4.5))
     orden = imp.iloc[::-1]
     ax.barh(orden["feature"], orden["importancia"], color="#1f77b4")
-    ax.set(title="Importancia de las features", xlabel="importancia")
+    ax.set(title=f"Importancia de las features ({imp['metodo'].iloc[0]})", xlabel="importancia")
     fig.tight_layout()
     fig.savefig(carpeta / "importancia_features.png", dpi=120)
     plt.close(fig)
@@ -209,11 +208,21 @@ def git_info() -> dict:
 
 # ------------------------------------------------------------- entrenamiento
 
-def entrenar(tipo: str | None = None, registrar: bool = True) -> dict:
+def entrenar(tipo: str | None = None, registrar: bool = True, guardar: bool = True,
+             hiperparametros: dict | None = None, etiquetas: dict | None = None,
+             anidado: bool = False, nombre_run: str | None = None) -> dict:
+    """Entrena, valida y (si registrar) crea un run en MLflow.
+
+    guardar=False no toca rutas.modelo ni rutas.metricas: sirve para comparar
+    candidatos sin cambiar el modelo de producción. hiperparametros se mezcla
+    sobre los de params.yaml. anidado=True crea el run bajo el run activo.
+    """
     p = config.params()
     m = p["modelo"]
     tipo = tipo or m["tipo"]
-    hp = m["hiperparametros"][tipo]
+    if tipo not in MODELOS:
+        raise ValueError(f"Modelo desconocido {tipo!r}. Opciones: {sorted(MODELOS)}")
+    hp = {**m["hiperparametros"].get(tipo, {}), **(hiperparametros or {})}
     feats = config.features()
     objetivo = m["objetivo"]
     cols_t = columnas_salida()  # columnas que produce transformar.py
@@ -225,7 +234,7 @@ def entrenar(tipo: str | None = None, registrar: bool = True) -> dict:
     if ent.empty or val.empty:
         raise ValueError("No hay filas en el periodo de entrenamiento o de validación")
 
-    modelo = construir(tipo, hp).fit(ent[feats], ent[objetivo])
+    modelo = construir(tipo, hp, feats).fit(ent[feats], ent[objetivo])
     pred = posprocesar(modelo.predict(val[feats]))
     error = metricas_error(val[objetivo], pred)
 
@@ -249,14 +258,19 @@ def entrenar(tipo: str | None = None, registrar: bool = True) -> dict:
     X_dia = val.loc[val["dteday"] == dias_completos[0], cols_t].reset_index(drop=True)
     latencia = latencia_p95_ms(pipe, X_dia, p.get("mlflow", {}).get("repeticiones_latencia", 50))
 
-    ruta_modelo = config.ruta("modelo")
-    ruta_modelo.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(modelo, ruta_modelo, compress=3)
-    tamano_mb = ruta_modelo.stat().st_size / 2**20
+    if guardar:
+        ruta_modelo = config.ruta("modelo")
+        ruta_modelo.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(modelo, ruta_modelo, compress=3)
+        tamano_mb = ruta_modelo.stat().st_size / 2**20
+    else:  # mismo formato, en un archivo temporal, solo para medir el tamaño
+        with tempfile.TemporaryDirectory() as tmp:
+            joblib.dump(modelo, Path(tmp) / "modelo.joblib", compress=3)
+            tamano_mb = (Path(tmp) / "modelo.joblib").stat().st_size / 2**20
 
     errores = val.assign(pred=pred, abs_err=np.abs(pred - val[objetivo]))
     mae_hora = errores.groupby("hr", as_index=False)["abs_err"].mean().rename(columns={"abs_err": "mae"})
-    imp = importancias(modelo, feats)
+    imp = importancias(modelo, feats, val, val[objetivo])
     huellas = {"entrenamiento": huella(ent), "validacion": huella(val)}
     git = git_info()
 
@@ -281,19 +295,30 @@ def entrenar(tipo: str | None = None, registrar: bool = True) -> dict:
         "hiperparametros": hp,
         "huella_datos_entrenamiento": huellas["entrenamiento"],
     }
-    config.ruta("metricas").write_text(json.dumps(metricas, indent=2, ensure_ascii=False) + "\n",
-                                       encoding="utf-8")
+    if guardar:
+        config.ruta("metricas").write_text(json.dumps(metricas, indent=2, ensure_ascii=False) + "\n",
+                                           encoding="utf-8")
 
     if registrar:
         metricas["mlflow_run_id"] = _registrar(
-            p, tipo, modelo, pipe, ent, val, pred, error, mae_base, latencia, tamano_mb,
+            p, tipo, hp, modelo, pipe, ent, val, pred, error, mae_base, latencia, tamano_mb,
             mae_hora, imp, huellas, git, feats, cols_t, objetivo, costo,
+            etiquetas or {}, anidado, nombre_run,
         )
     return metricas
 
 
-def _registrar(p, tipo, modelo, pipe, ent, val, pred, error, mae_base, latencia, tamano_mb,
-               mae_hora, imp, huellas, git, feats, cols_t, objetivo, costo) -> str:
+def _hp_escalares(hp: dict, modelo) -> dict:
+    """Hiperparámetros a registrar: los de params.yaml y los escalares del estimador."""
+    profundos = {k: v for k, v in modelo.get_params(deep=True).items()
+                 if isinstance(v, (int, float, str, bool, type(None)))}
+    planos = {k: (",".join(map(str, v)) if isinstance(v, (list, tuple)) else v) for k, v in hp.items()}
+    return {f"hp_{k}": v for k, v in {**profundos, **planos}.items()}
+
+
+def _registrar(p, tipo, hp, modelo, pipe, ent, val, pred, error, mae_base, latencia, tamano_mb,
+               mae_hora, imp, huellas, git, feats, cols_t, objetivo, costo,
+               etiquetas, anidado, nombre_run) -> str:
     import mlflow
     import mlflow.sklearn
     from mlflow.models import infer_signature
@@ -303,13 +328,14 @@ def _registrar(p, tipo, modelo, pipe, ent, val, pred, error, mae_base, latencia,
     mes_val = val_v["desde"][:7]
     fuente = str(config.ruta("fuente_db").resolve())
 
-    mlflow.set_experiment(p["mlflow"]["experimento"])
-    with mlflow.start_run(run_name=f"{tipo}-{mes_val}") as run:
+    if not anidado:
+        mlflow.set_experiment(p["mlflow"]["experimento"])
+    with mlflow.start_run(run_name=nombre_run or f"{tipo}-{mes_val}", nested=anidado) as run:
         # 1. Parámetros
         mlflow.log_params({
             "modelo_tipo": tipo,
             "modelo_clase": type(modelo).__name__,
-            **{f"hp_{k}": v for k, v in modelo.get_params().items()},
+            **_hp_escalares(hp, modelo),
             "entrenamiento_inicio": ent_v["desde"],
             "entrenamiento_fin": ent_v["hasta"],
             "validacion_mes": mes_val,
@@ -352,6 +378,7 @@ def _registrar(p, tipo, modelo, pipe, ent, val, pred, error, mae_base, latencia,
             "huella_datos_entrenamiento": huellas["entrenamiento"],
             "huella_datos_validacion": huellas["validacion"],
             "fuente": fuente,
+            **etiquetas,
         })
         for nombre, df, contexto, ventana in (("entrenamiento", ent, "training", ent_v),
                                               ("validacion", val, "validation", val_v)):
@@ -387,6 +414,8 @@ def _registrar(p, tipo, modelo, pipe, ent, val, pred, error, mae_base, latencia,
             skops_trusted_types=TIPOS_CONFIABLES_SKOPS,
             signature=firma,
             input_example=ejemplo,
+            # El perfil histórico es una clase nuestra: se empaqueta el código de bicis.
+            code_paths=[str(config.RAIZ / "src" / "bicis")] if tipo == "perfil_historico" else None,
         )
         return run.info.run_id
 

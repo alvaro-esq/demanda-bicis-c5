@@ -69,8 +69,11 @@ def entorno(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
     params = yaml.safe_load((RAIZ / "params.yaml").read_text(encoding="utf-8"))
-    for hp in params["modelo"]["hiperparametros"].values():
-        hp["n_estimators"] = 10
+    for hp in params["modelo"]["hiperparametros"].values():  # modelos chicos y rápidos
+        if "n_estimators" in hp:
+            hp["n_estimators"] = 10
+        if "max_iter" in hp:
+            hp["max_iter"] = 20
         if "n_jobs" in hp:
             hp["n_jobs"] = 1
     params["mlflow"]["repeticiones_latencia"] = 3
