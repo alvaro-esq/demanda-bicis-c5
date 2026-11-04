@@ -1,50 +1,42 @@
-"""Paso 4: carga el modelo y predice cnt para cada hora.
+"""Paso 4: carga el modelo champion de MLflow y predice cnt para cada hora.
 
-Nunca entrena. Recorta las predicciones a >= 0 y las redondea a entero.
-Escribe fecha, hr, cnt_predicho.
+Carga models:/<mlflow.modelo_registrado>@<mlflow.alias> (demanda-bicis-c5@champion)
+del servidor en MLFLOW_TRACKING_URI y aplica el factor de ajuste guardado como
+tag de esa versión: cnt_predicho = round(max(predicción, 0) * (1 + factor)).
+Nunca entrena. Escribe fecha, hr, cnt_predicho y version_modelo.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 
-from bicis import config
+from bicis import config, costos, registro
+from bicis.transformar import columnas_salida
 
 ENTRADA = "features.csv"
 SALIDA = "predicciones.csv"
 
 
-def cargar_modelo():
-    ruta = config.ruta("modelo")
-    if not ruta.exists():
-        raise FileNotFoundError(f"No existe el modelo {ruta}. Corre `make entrenar` o `dvc pull`.")
-    modelo = joblib.load(ruta)
-    usadas = list(getattr(modelo, "feature_names_in_", []))
-    if usadas != config.features():
-        raise ValueError(
-            f"El modelo usa {usadas} pero params.yaml define {config.features()}: reentrena"
-        )
-    return modelo
-
-
 def ejecutar(fecha) -> Path:
     fecha = config.validar_fecha(fecha)
     df = pd.read_csv(config.leer_paso_anterior(fecha, ENTRADA))
-    modelo = cargar_modelo()
+    champion = registro.cargar_champion()
 
-    faltan = [c for c in modelo.feature_names_in_ if c not in df.columns]
+    cols = columnas_salida()
+    faltan = [c for c in cols if c not in df.columns]
     if faltan:
-        raise ValueError(f"Faltan features en {ENTRADA}: {faltan}")
-    pred = modelo.predict(df[list(modelo.feature_names_in_)])
+        raise ValueError(f"Faltan columnas en {ENTRADA}: {faltan}")
+    pred = np.asarray(champion.modelo.predict(df[cols]), dtype=float)
 
     salida_df = pd.DataFrame({
         "fecha": fecha,
         "hr": df["hr"].astype("int64"),
-        "cnt_predicho": np.rint(np.clip(pred, 0, None)).astype("int64"),
+        # Mismo plan que se evaluó al elegir el factor: round(max(pred, 0) * (1 + factor)).
+        "cnt_predicho": costos.planificar(np.rint(np.clip(pred, 0, None)), champion.factor).astype("int64"),
+        "version_modelo": champion.etiqueta,
     })
     salida = config.salida_paso(fecha, SALIDA)
     salida_df.to_csv(salida, index=False)

@@ -1,0 +1,22 @@
+# Costos del operador para evaluar el modelo.
+#
+# SUPUESTOS DEL CASO: no son costos medidos ni datos de la operación real.
+# Son valores ilustrativos para comparar modelos como los compara el operador.
+# Cambiarlos cambia la métrica y el factor de ajuste elegido, así que hay que
+# revisarlos con el negocio antes de usarlos para decidir.
+#
+# Por hora, con plan = bicicletas que el operador planifica y real = cnt:
+#   faltantes = max(real - plan, 0)   bicicletas que se demandaron y no había
+#   sobrantes = max(plan - real, 0)   bicicletas que se planificaron y nadie usó
+#   costo     = costo_faltante * faltantes + costo_sobrante * sobrantes
+
+costo_faltante: 3   # supuesto: cada bicicleta que faltó cuesta 3
+costo_sobrante: 1   # supuesto: cada bicicleta que sobró cuesta 1
+
+# El operador planifica con la predicción multiplicada por (1 + factor) y la
+# redondea a bicicletas enteras. El factor se elige en validación, dentro de
+# este rango, como el que minimiza el costo medio por hora (en empate, el menor).
+factor_ajuste:
+  minimo: 0.00
+  maximo: 0.40
+  paso: 0.01

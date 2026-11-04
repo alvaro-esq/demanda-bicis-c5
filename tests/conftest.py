@@ -64,11 +64,22 @@ def entorno(tmp_path, monkeypatch):
     El 2011-03-05 no tiene las horas 3, 4 y 23.
     """
     for var in ["BICIS_ZIP_ORIGEN", "BICIS_FUENTE_DB", "BICIS_STAGING_DIR",
-                "BICIS_SALIDAS_DB", "BICIS_MODELO", "BICIS_METRICAS"]:
+                "BICIS_SALIDAS_DB", "BICIS_MODELO", "BICIS_METRICAS", "BICIS_COSTOS",
+                "MLFLOW_TRACKING_URI"]:
         monkeypatch.delenv(var, raising=False)
 
     params = yaml.safe_load((RAIZ / "params.yaml").read_text(encoding="utf-8"))
-    params["modelo"]["random_forest"].update(n_estimators=10, n_jobs=1)
+    for hp in params["modelo"]["hiperparametros"].values():  # modelos chicos y rápidos
+        if "n_estimators" in hp:
+            hp["n_estimators"] = 10
+        if "max_iter" in hp:
+            hp["max_iter"] = 20
+        if "n_jobs" in hp:
+            hp["n_jobs"] = 1
+    params["mlflow"]["repeticiones_latencia"] = 3
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs" / "costos.yaml").write_text(
+        (RAIZ / "configs" / "costos.yaml").read_text(encoding="utf-8"), encoding="utf-8")
     ruta_params = tmp_path / "params.yaml"
     ruta_params.write_text(yaml.safe_dump(params), encoding="utf-8")
     monkeypatch.setenv("BICIS_PARAMS", str(ruta_params))
@@ -88,7 +99,8 @@ def entorno(tmp_path, monkeypatch):
 
 @pytest.fixture
 def modelo_entrenado(entorno):
-    metricas = cargar_script("entrenar").entrenar()
+    from bicis import entrenar
+    metricas = entrenar.entrenar(registrar=False)
     return SimpleNamespace(entorno=entorno, metricas=metricas)
 
 
@@ -98,3 +110,19 @@ def escribir_staging(entorno, fecha: str, nombre: str, df: pd.DataFrame) -> Path
     ruta = d / nombre
     df.to_csv(ruta, index=False)
     return ruta
+
+
+@pytest.fixture
+def champion(entorno, monkeypatch):
+    """MLflow local en tmp_path con un modelo registrado como demanda-bicis-c5@champion."""
+    import mlflow
+
+    from bicis import entrenar, registro
+
+    uri = (entorno.raiz / "mlruns").as_uri()
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    mlflow.set_tracking_uri(uri)
+    m = entrenar.entrenar("random_forest", guardar=False)
+    r = registro.registrar_champion(m["mlflow_run_id"], motivo="prueba")
+    return SimpleNamespace(entorno=entorno, metricas=m, registro=r)

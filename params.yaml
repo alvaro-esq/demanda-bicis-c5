@@ -9,6 +9,7 @@ rutas:
   salidas_db: data/salidas/predicciones.db      # BICIS_SALIDAS_DB
   modelo: models/modelo.joblib                  # BICIS_MODELO
   metricas: metrics.json                        # BICIS_METRICAS
+  costos: configs/costos.yaml                   # BICIS_COSTOS
 
 fuente:
   csv_en_zip: hour.csv
@@ -34,8 +35,45 @@ modelo:
   # Prohibidas como feature: casual y registered suman cnt (fuga del objetivo);
   # instant/dteday son identificadores; yr es constante en el año de entrenamiento.
   prohibidas: [casual, registered, instant, dteday, yr]
-  random_forest:
-    n_estimators: 300
-    min_samples_leaf: 2
-    random_state: 42
-    n_jobs: -1
+  # Modelo por defecto (--modelo lo cambia) e hiperparámetros de cada tipo.
+  tipo: random_forest
+  hiperparametros:
+    perfil_historico:
+      claves: [hr, workingday]
+    ridge:
+      alpha: 1.0
+      categoricas: [hr, mnth]
+    random_forest:
+      n_estimators: 300
+      min_samples_leaf: 2
+      random_state: 42
+      n_jobs: -1
+    extra_trees:
+      n_estimators: 300
+      min_samples_leaf: 2
+      random_state: 42
+      n_jobs: -1
+    gradient_boosting:
+      n_estimators: 300
+      learning_rate: 0.1
+      max_depth: 5
+      random_state: 42
+    hist_gradient_boosting:
+      objetivo_log: true        # entrena con log1p(cnt) y predice con expm1
+      learning_rate: 0.1
+      max_iter: 300
+      random_state: 42
+
+# Escalones de complejidad (make escalones). Gana el de menor costo medio por hora
+# en validación (con su propio factor) y, en empate, el de menor MAE. Nunca 2012.
+escalones:
+  orden: [perfil_historico, ridge, random_forest, hist_gradient_boosting]
+  busqueda:
+    hist_gradient_boosting:
+      learning_rate: [0.05, 0.1, 0.2]
+
+mlflow:
+  experimento: demanda-bicis-c5
+  modelo_registrado: demanda-bicis-c5   # predecir.py carga models:/<nombre>@<alias>
+  alias: champion
+  repeticiones_latencia: 50
