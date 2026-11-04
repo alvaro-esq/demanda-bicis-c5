@@ -74,4 +74,6 @@ escalones:
 
 mlflow:
   experimento: demanda-bicis-c5
+  modelo_registrado: demanda-bicis-c5   # predecir.py carga models:/<nombre>@<alias>
+  alias: champion
   repeticiones_latencia: 50

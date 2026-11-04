@@ -75,7 +75,7 @@ def ejecutar(fecha: str) -> pathlib.Path: ...
 | `extraer`     | `fuente/bicis.db` (filas de `fecha`)  | `data/staging/<fecha>/extraido.csv`      |
 | `limpiar`     | `extraido.csv`                        | `data/staging/<fecha>/limpio.csv`        |
 | `transformar` | `limpio.csv`                          | `data/staging/<fecha>/features.csv`      |
-| `predecir`    | `features.csv` + `models/modelo.joblib` | `data/staging/<fecha>/predicciones.csv` |
+| `predecir`    | `features.csv` + `models:/demanda-bicis-c5@champion` | `data/staging/<fecha>/predicciones.csv` |
 | `almacenar`   | `predicciones.csv`                    | `data/salidas/predicciones.db`           |
 
 ### Responsabilidades
@@ -91,11 +91,15 @@ def ejecutar(fecha: str) -> pathlib.Path: ...
   vecina más cercana, y se marca con `hora_imputada = 1`.
 - **transformar**: deja `dteday`, `hr` y las columnas de `modelo.features`, en ese
   orden. Lanza un error si aparece alguna columna de `modelo.prohibidas`.
-- **predecir**: carga el modelo y predice `cnt`. Recorta las predicciones a ≥ 0 y las
-  redondea a entero. Escribe `fecha, hr, cnt_predicho`. **Nunca entrena.**
+- **predecir**: carga `models:/demanda-bicis-c5@champion` desde MLflow
+  (`MLFLOW_TRACKING_URI`), resolviendo el alias a una versión exacta. Predice `cnt`, lo
+  recorta a ≥ 0, lo redondea y aplica el factor de ajuste del tag `factor_ajuste` de
+  esa versión: `cnt_predicho = round(pred × (1 + factor))`. Escribe `fecha, hr,
+  cnt_predicho, version_modelo` (por ejemplo, `demanda-bicis-c5/1`). **Nunca entrena.**
 - **almacenar**: guarda en `data/salidas/predicciones.db`, tabla `predicciones`
-  (`fecha TEXT, hr INTEGER, cnt_predicho INTEGER, creado_en TEXT`, PK
-  `(fecha, hr)`). **Reemplaza el día completo**: en una sola transacción borra todas
+  (`fecha TEXT, hr INTEGER, cnt_predicho INTEGER, creado_en TEXT, version_modelo TEXT`,
+  PK `(fecha, hr)`). Si la base es anterior a `version_modelo`, se migra con `ALTER TABLE`
+  (las filas viejas quedan en NULL). **Reemplaza el día completo**: en una sola transacción borra todas
   las filas de `fecha` e inserta las 24 nuevas. Devuelve la ruta de la base.
 
 ## Modelo
@@ -130,6 +134,23 @@ def ejecutar(fecha: str) -> pathlib.Path: ...
   lo evalúa en otro mes de la fuente y lo compara con el mes de validación. Registra todo
   en el **mismo** run: métricas `eval_<mes>_*`, MAE y error medio por hora como series
   (step = hora), el mes como dataset `evaluation` y artefactos en `evaluacion_<mes>/`.
+
+## Escalones y modelo champion
+
+- `src/bicis/escalones.py` (`make escalones [RUN_RF=<id>]`) entrena un run por escalón,
+  con su propio factor: `perfil_historico` (promedio por hora y tipo de día), `ridge`
+  (`hr` y `mnth` one-hot), `random_forest` y `hist_gradient_boosting` (objetivo en
+  `log1p`). La búsqueda de `learning_rate` ∈ [0.05, 0.1, 0.2] va en runs anidados bajo
+  un run padre. Gana el menor `val_costo_medio_hora_ajustado` y, en empate, el menor
+  `val_mae`. Falla si alguna ventana toca 2012. No modifica `models/modelo.joblib` ni
+  `metrics.json`.
+- `src/bicis/registro.py` registra un run como una versión de `demanda-bicis-c5`, le pone
+  el alias `champion` y guarda como tags de la versión `factor_ajuste`, el costo (con y sin
+  ajuste), `val_mae`, la ventana, las features, el run y el commit. La primera
+  promoción (versión 1, HGB con lr 0.1) se hizo a mano (`promocion=manual`); las
+  siguientes no deberían.
+- `models/modelo.joblib` sigue saliendo de `make entrenar` y está versionado con DVC,
+  pero **predecir ya no lo usa**: el modelo de producción es el champion del registro.
 
 ## Costo del operador
 

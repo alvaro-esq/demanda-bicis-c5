@@ -110,3 +110,19 @@ def escribir_staging(entorno, fecha: str, nombre: str, df: pd.DataFrame) -> Path
     ruta = d / nombre
     df.to_csv(ruta, index=False)
     return ruta
+
+
+@pytest.fixture
+def champion(entorno, monkeypatch):
+    """MLflow local en tmp_path con un modelo registrado como demanda-bicis-c5@champion."""
+    import mlflow
+
+    from bicis import entrenar, registro
+
+    uri = (entorno.raiz / "mlruns").as_uri()
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    mlflow.set_tracking_uri(uri)
+    m = entrenar.entrenar("random_forest", guardar=False)
+    r = registro.registrar_champion(m["mlflow_run_id"], motivo="prueba")
+    return SimpleNamespace(entorno=entorno, metricas=m, registro=r)
