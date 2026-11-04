@@ -9,6 +9,7 @@ rutas:
   salidas_db: data/salidas/predicciones.db      # BICIS_SALIDAS_DB
   modelo: models/modelo.joblib                  # BICIS_MODELO
   metricas: metrics.json                        # BICIS_METRICAS
+  costos: configs/costos.yaml                   # BICIS_COSTOS
 
 fuente:
   csv_en_zip: hour.csv

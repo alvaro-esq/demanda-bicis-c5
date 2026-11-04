@@ -8,7 +8,7 @@ MLFLOW  := docker compose -f docker/docker-compose.yml
 # Servidor de MLflow (docker/docker-compose.yml). Se puede sobrescribir desde el entorno.
 export MLFLOW_TRACKING_URI ?= http://localhost:5000
 
-.PHONY: help venv fuente test entrenar pipeline mlflow-up mlflow-down airflow-env airflow-build airflow-up airflow-down airflow-ps airflow-logs clean
+.PHONY: help venv fuente test entrenar evaluar pipeline mlflow-up mlflow-down airflow-env airflow-build airflow-up airflow-down airflow-ps airflow-logs clean
 
 help: ## Lista los comandos disponibles
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-15s %s\n", $$1, $$2}'
@@ -29,6 +29,10 @@ test: venv ## Corre las pruebas
 
 entrenar: venv ## Entrena (ene-nov 2011), valida (dic 2011) y registra el run en MLflow. MODELO=tipo opcional
 	PYTHONPATH=src $(PYTHON) -m bicis.entrenar $(if $(MODELO),--modelo $(MODELO))
+
+evaluar: venv ## Evalúa el modelo del run RUN_ID en MES=AAAA-MM y lo registra en ese run
+	@test -n "$(RUN_ID)" -a -n "$(MES)" || { echo "Uso: make evaluar RUN_ID=<id> MES=AAAA-MM"; exit 1; }
+	PYTHONPATH=src $(PYTHON) -m bicis.evaluar --run-id $(RUN_ID) --mes $(MES)
 
 pipeline: venv ## Corre los cinco pasos para FECHA=AAAA-MM-DD
 	@test -n "$(FECHA)" || { echo "Uso: make pipeline FECHA=AAAA-MM-DD"; exit 1; }

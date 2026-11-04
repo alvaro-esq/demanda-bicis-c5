@@ -126,6 +126,25 @@ def ejecutar(fecha: str) -> pathlib.Path: ...
     `transformar.py` (incluida `dteday`). Se serializa con skops, confiando solo en
     `sklearn.tree._tree.Tree`.
 - `--sin-mlflow` entrena sin registrar el run.
+- `src/bicis/evaluar.py` (`make evaluar RUN_ID=... MES=AAAA-MM`) carga el modelo de un run,
+  lo evalúa en otro mes de la fuente y lo compara con el mes de validación. Registra todo
+  en el **mismo** run: métricas `eval_<mes>_*`, MAE y error medio por hora como series
+  (step = hora), el mes como dataset `evaluation` y artefactos en `evaluacion_<mes>/`.
+
+## Costo del operador
+
+- `configs/costos.yaml` (`rutas.costos`, `BICIS_COSTOS`) tiene **supuestos del caso**, no
+  costos medidos: cada bicicleta que faltó cuesta 3 y cada una que sobró cuesta 1.
+- La lógica está en `src/bicis/costos.py`. Por hora, `costo = 3 × max(real − plan, 0) +
+  1 × max(plan − real, 0)`, y la métrica es el costo medio por hora.
+- El operador planifica con `round(predicción × (1 + factor))`. El factor se elige en
+  validación entre 0 % y 40 % (paso 1 %), como el que minimiza el costo medio por hora;
+  en empate, se elige el menor.
+- Cada run registra `val_costo_medio_hora` (sin ajuste), `factor_ajuste`,
+  `val_costo_medio_hora_ajustado`, `val_ahorro_costo_pct`, la curva
+  (`val_costo_medio_hora_por_factor`, step = factor en %), los supuestos como parámetros
+  y los artefactos `evaluacion/costo_vs_factor.{png,csv}` y `evaluacion/costos.yaml`.
+- `predecir.py` no aplica el factor: la predicción sigue siendo la del modelo.
 - **Nunca usar `casual` ni `registered`**: ni como feature, ni para derivar features,
   ni para calcular el objetivo. Son los componentes de `cnt` (`cnt = casual +
   registered`), así que usarlos filtraría el objetivo. Las pruebas deben verificarlo.
@@ -177,7 +196,7 @@ def ejecutar(fecha: str) -> pathlib.Path: ...
   con las restricciones de Airflow 3.3.2 (Python 3.12). `requirements-dev.txt` agrega
   `dvc` y `pytest` para el `.venv`.
 - `make venv` · `make fuente` · `make test` · `make entrenar` ·
-  `make pipeline FECHA=AAAA-MM-DD` · `make mlflow-up` · `make airflow-build` ·
+  `make evaluar RUN_ID=... MES=...` · `make pipeline FECHA=AAAA-MM-DD` · `make mlflow-up` · `make airflow-build` ·
   `make airflow-up` · `make airflow-down`
 
 ## Pruebas

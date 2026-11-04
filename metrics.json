@@ -1,7 +1,12 @@
 {
+  "modelo_tipo": "random_forest",
   "mae_validacion": 33.557,
+  "rmse_validacion": 54.02,
+  "error_medio_validacion": 14.594,
   "mae_referencia_promedio_hora": 43.71,
   "cnt_medio_validacion": 117.845,
+  "latencia_p95_ms_dia": 108.03,
+  "modelo_tamano_mb": 20.63,
   "filas_entrenamiento": 7904,
   "filas_validacion": 741,
   "entrenamiento": {
@@ -25,10 +30,11 @@
     "hum",
     "windspeed"
   ],
-  "random_forest": {
+  "hiperparametros": {
     "n_estimators": 300,
     "min_samples_leaf": 2,
     "random_state": 42,
     "n_jobs": -1
-  }
+  },
+  "huella_datos_entrenamiento": "c32589848482cd38656d41ed693077cf982db6d490df0634a4f5132e515b2529"
 }

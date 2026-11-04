@@ -17,6 +17,8 @@ def test_guarda_modelo_y_metricas(modelo_entrenado):
     assert m["mae_validacion"] >= 0 and m["rmse_validacion"] >= m["mae_validacion"]
     assert m["latencia_p95_ms_dia"] > 0 and m["modelo_tamano_mb"] > 0
     assert m["validacion"] == {"desde": "2011-12-01", "hasta": "2011-12-31"}
+    assert 0 <= m["factor_ajuste"] <= 0.40
+    assert m["costo_medio_hora_validacion_ajustado"] <= m["costo_medio_hora_validacion"]
 
 
 def test_entrena_con_enero_a_noviembre_y_valida_con_diciembre(modelo_entrenado):
@@ -106,7 +108,13 @@ def test_registra_el_run_en_mlflow(entorno, monkeypatch):
     nombres = {a.path for a in cliente.list_artifacts(run.info.run_id, "evaluacion")}
     assert {"evaluacion/real_vs_prediccion.png", "evaluacion/mae_por_hora.png",
             "evaluacion/mae_por_hora.csv", "evaluacion/importancia_features.png",
-            "evaluacion/importancia_features.csv", "evaluacion/linaje.json"} <= nombres
+            "evaluacion/importancia_features.csv", "evaluacion/linaje.json",
+            "evaluacion/costo_vs_factor.png", "evaluacion/costo_vs_factor.csv",
+            "evaluacion/costos.yaml"} <= nombres
+    mt = run.data.metrics
+    assert {"val_costo_medio_hora", "factor_ajuste", "val_costo_medio_hora_ajustado"} <= set(mt)
+    assert mt["val_costo_medio_hora_ajustado"] <= mt["val_costo_medio_hora"]
+    assert (p["costo_faltante"], p["costo_sobrante"]) == ("3.0", "1.0")
 
     # 5. Modelo con firma = columnas de transformar.py; se carga y predice esa tabla
     modelo = mlflow.pyfunc.load_model(f"runs:/{run.info.run_id}/modelo")

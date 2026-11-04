@@ -64,7 +64,7 @@ def entorno(tmp_path, monkeypatch):
     El 2011-03-05 no tiene las horas 3, 4 y 23.
     """
     for var in ["BICIS_ZIP_ORIGEN", "BICIS_FUENTE_DB", "BICIS_STAGING_DIR",
-                "BICIS_SALIDAS_DB", "BICIS_MODELO", "BICIS_METRICAS",
+                "BICIS_SALIDAS_DB", "BICIS_MODELO", "BICIS_METRICAS", "BICIS_COSTOS",
                 "MLFLOW_TRACKING_URI"]:
         monkeypatch.delenv(var, raising=False)
 
@@ -74,6 +74,9 @@ def entorno(tmp_path, monkeypatch):
         if "n_jobs" in hp:
             hp["n_jobs"] = 1
     params["mlflow"]["repeticiones_latencia"] = 3
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs" / "costos.yaml").write_text(
+        (RAIZ / "configs" / "costos.yaml").read_text(encoding="utf-8"), encoding="utf-8")
     ruta_params = tmp_path / "params.yaml"
     ruta_params.write_text(yaml.safe_dump(params), encoding="utf-8")
     monkeypatch.setenv("BICIS_PARAMS", str(ruta_params))

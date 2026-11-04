@@ -10,8 +10,11 @@ mlflow.experimento con:
   - parámetros: tipo de modelo, hiperparámetros y ventana de datos;
   - métricas de validación: MAE, RMSE, error medio (positivo = sobreestima),
     latencia p95 de predecir un día (24 horas) y tamaño del modelo;
-  - artefactos: real vs. predicción en validación, MAE por hora e importancia
-    de las features;
+  - costo del operador (configs/costos.yaml, supuestos): costo medio por hora
+    sin ajuste, factor de ajuste que lo minimiza en validación y costo con ese
+    factor;
+  - artefactos: real vs. predicción en validación, MAE por hora, importancia
+    de las features y costo vs. factor;
   - linaje: commit de Git, features, huella de los datos y los datasets de
     entrenamiento y validación;
   - el modelo (skops), con firma: un DataFrame con las columnas de transformar.py.
@@ -28,6 +31,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -42,7 +46,7 @@ from sklearn.ensemble import ExtraTreesRegressor, GradientBoostingRegressor, Ran
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.pipeline import Pipeline
 
-from bicis import config
+from bicis import config, costos
 from bicis.transformar import columnas_salida
 
 MODELOS = {
@@ -169,6 +173,29 @@ def graficas(carpeta: Path, val: pd.DataFrame, pred: np.ndarray, mae_hora: pd.Da
     plt.close(fig)
 
 
+def grafica_costo(carpeta: Path, costo: dict, etiqueta_val: str) -> None:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    curva, s = costo["curva"], costo["supuestos"]
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    ax.plot(100 * curva["factor"], curva["costo_medio_hora"], marker="o", ms=3, color="#1f77b4")
+    ax.axvline(100 * costo["factor"], color="#ff7f0e", ls="--", lw=1)
+    ax.scatter([0, 100 * costo["factor"]], [costo["sin_ajuste"], costo["con_ajuste"]],
+               color=["gray", "#ff7f0e"], zorder=3)
+    ax.annotate(f"sin ajuste: {costo['sin_ajuste']:.1f}", (0, costo["sin_ajuste"]),
+                textcoords="offset points", xytext=(8, 6))
+    ax.annotate(f"factor {100 * costo['factor']:.0f} %: {costo['con_ajuste']:.1f}",
+                (100 * costo["factor"], costo["con_ajuste"]), textcoords="offset points", xytext=(8, -14))
+    ax.set(title=f"Costo medio por hora vs. factor de ajuste — {etiqueta_val}\n"
+                 f"(supuestos: faltante = {s.faltante:g}, sobrante = {s.sobrante:g})",
+           xlabel="factor de ajuste (%)", ylabel="costo medio por hora")
+    fig.tight_layout()
+    fig.savefig(carpeta / "costo_vs_factor.png", dpi=120)
+    plt.close(fig)
+
+
 def git_info() -> dict:
     def git(*args):
         return subprocess.run(["git", *args], cwd=config.RAIZ, capture_output=True,
@@ -206,6 +233,17 @@ def entrenar(tipo: str | None = None, registrar: bool = True) -> dict:
     base = ent.groupby(["workingday", "hr"])[objetivo].mean()
     mae_base = mean_absolute_error(val[objetivo], val.set_index(["workingday", "hr"]).index.map(base))
 
+    # Costo del operador (supuestos de configs/costos.yaml) y factor de ajuste elegido en validación.
+    cst = costos.cargar()
+    factor, curva = costos.mejor_factor(val[objetivo], pred, cst)
+    costo = {
+        "supuestos": cst,
+        "factor": factor,
+        "curva": curva,
+        "sin_ajuste": costos.costo_medio(val[objetivo], pred, cst),
+        "con_ajuste": costos.costo_medio(val[objetivo], costos.planificar(pred, factor), cst),
+    }
+
     pipe = pipeline_registrable(modelo, ent[cols_t], feats)
     dias_completos = val.groupby("dteday").size().loc[lambda s: s == 24].index
     X_dia = val.loc[val["dteday"] == dias_completos[0], cols_t].reset_index(drop=True)
@@ -228,6 +266,10 @@ def entrenar(tipo: str | None = None, registrar: bool = True) -> dict:
         "rmse_validacion": round(error["rmse"], 3),
         "error_medio_validacion": round(error["error_medio"], 3),
         "mae_referencia_promedio_hora": round(float(mae_base), 3),
+        "costo_medio_hora_validacion": round(costo["sin_ajuste"], 3),
+        "factor_ajuste": factor,
+        "costo_medio_hora_validacion_ajustado": round(costo["con_ajuste"], 3),
+        "costos_supuestos": {"faltante": cst.faltante, "sobrante": cst.sobrante},
         "cnt_medio_validacion": round(float(val[objetivo].mean()), 3),
         "latencia_p95_ms_dia": round(latencia, 2),
         "modelo_tamano_mb": round(tamano_mb, 2),
@@ -245,13 +287,13 @@ def entrenar(tipo: str | None = None, registrar: bool = True) -> dict:
     if registrar:
         metricas["mlflow_run_id"] = _registrar(
             p, tipo, modelo, pipe, ent, val, pred, error, mae_base, latencia, tamano_mb,
-            mae_hora, imp, huellas, git, feats, cols_t, objetivo,
+            mae_hora, imp, huellas, git, feats, cols_t, objetivo, costo,
         )
     return metricas
 
 
 def _registrar(p, tipo, modelo, pipe, ent, val, pred, error, mae_base, latencia, tamano_mb,
-               mae_hora, imp, huellas, git, feats, cols_t, objetivo) -> str:
+               mae_hora, imp, huellas, git, feats, cols_t, objetivo, costo) -> str:
     import mlflow
     import mlflow.sklearn
     from mlflow.models import infer_signature
@@ -273,6 +315,11 @@ def _registrar(p, tipo, modelo, pipe, ent, val, pred, error, mae_base, latencia,
             "validacion_mes": mes_val,
             "objetivo": objetivo,
             "n_features": len(feats),
+            # Supuestos de costo (configs/costos.yaml) y rango donde se busca el factor.
+            "costo_faltante": costo["supuestos"].faltante,
+            "costo_sobrante": costo["supuestos"].sobrante,
+            "factor_rango": f"{costo['supuestos'].factor_minimo}-{costo['supuestos'].factor_maximo}"
+                            f" paso {costo['supuestos'].factor_paso}",
         })
 
         # 2. Métricas de validación
@@ -285,7 +332,15 @@ def _registrar(p, tipo, modelo, pipe, ent, val, pred, error, mae_base, latencia,
             "modelo_tamano_mb": tamano_mb,
             "filas_entrenamiento": len(ent),
             "filas_validacion": len(val),
+            # Costo del operador: 3 x faltantes + 1 x sobrantes por hora (supuestos).
+            "val_costo_medio_hora": costo["sin_ajuste"],
+            "factor_ajuste": costo["factor"],
+            "val_costo_medio_hora_ajustado": costo["con_ajuste"],
+            "val_ahorro_costo_pct": 100 * (1 - costo["con_ajuste"] / costo["sin_ajuste"]),
         })
+        for fila in costo["curva"].itertuples():  # la curva también como serie (step = factor en %)
+            mlflow.log_metric("val_costo_medio_hora_por_factor", fila.costo_medio_hora,
+                              step=int(round(fila.factor * 100)))
 
         # 4. Linaje
         mlflow.set_tags({
@@ -312,6 +367,9 @@ def _registrar(p, tipo, modelo, pipe, ent, val, pred, error, mae_base, latencia,
             graficas(carpeta, val, pred, mae_hora, imp, objetivo, f"validación {mes_val}")
             mae_hora.round(3).to_csv(carpeta / "mae_por_hora.csv", index=False)
             imp.round(5).to_csv(carpeta / "importancia_features.csv", index=False)
+            costo["curva"].round(4).to_csv(carpeta / "costo_vs_factor.csv", index=False)
+            grafica_costo(carpeta, costo, f"validación {mes_val}")
+            shutil.copy(config.ruta("costos"), carpeta / "costos.yaml")
             (carpeta / "linaje.json").write_text(json.dumps({
                 "git": git, "features": feats, "columnas_entrada": cols_t,
                 "huellas_sha256": huellas, "fuente": fuente,
@@ -347,6 +405,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{m['modelo_tipo']}: MAE {m['mae_validacion']} · RMSE {m['rmse_validacion']} · "
           f"error medio {m['error_medio_validacion']:+} · p95 {m['latencia_p95_ms_dia']} ms/día · "
           f"{m['modelo_tamano_mb']} MB")
+    print(f"Costo medio/hora (supuestos {m['costos_supuestos']}): {m['costo_medio_hora_validacion']} "
+          f"sin ajuste · {m['costo_medio_hora_validacion_ajustado']} con factor "
+          f"{100 * m['factor_ajuste']:.0f} %")
     print(f"Modelo   -> {config.ruta('modelo')}")
     print(f"Métricas -> {config.ruta('metricas')}")
     if "mlflow_run_id" in m:
