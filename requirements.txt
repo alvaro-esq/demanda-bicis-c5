@@ -1,0 +1,9 @@
+# Dependencias del pipeline. Versiones fijadas y compatibles con las
+# restricciones de Airflow 3.3.2 (constraints-3.12.txt), porque este mismo
+# archivo se instala en la imagen de Airflow.
+numpy==2.5.3
+pandas==3.0.5
+scikit-learn==1.9.1
+scipy==1.18.1
+joblib==1.6.0
+PyYAML==6.0.3

@@ -1,0 +1,38 @@
+# Valores por defecto del proyecto demanda-bicis-c5.
+# Cada ruta se puede sobrescribir con la variable de entorno indicada al lado.
+# Las rutas relativas se resuelven desde la carpeta que contiene este archivo.
+
+rutas:
+  zip_origen: bike_sharing_dataset.zip          # BICIS_ZIP_ORIGEN
+  fuente_db: fuente/bicis.db                    # BICIS_FUENTE_DB
+  staging_dir: data/staging                     # BICIS_STAGING_DIR
+  salidas_db: data/salidas/predicciones.db      # BICIS_SALIDAS_DB
+  modelo: models/modelo_rf.joblib               # BICIS_MODELO
+
+fuente:
+  csv_en_zip: hour.csv
+  tabla: registros_horarios
+
+modelo:
+  objetivo: cnt
+  anio_entrenamiento: 2011
+  features:
+    - season
+    - mnth
+    - hr
+    - holiday
+    - weekday
+    - workingday
+    - weathersit
+    - temp
+    - atemp
+    - hum
+    - windspeed
+  # Prohibidas como feature: casual y registered suman cnt (fuga del objetivo);
+  # instant/dteday son identificadores; yr es constante en el año de entrenamiento.
+  prohibidas: [casual, registered, instant, dteday, yr]
+  random_forest:
+    n_estimators: 300
+    min_samples_leaf: 2
+    random_state: 42
+    n_jobs: -1

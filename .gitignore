@@ -1,0 +1,16 @@
+# Datos de origen y artefactos locales (no se versionan en git)
+*.zip
+fuente/
+data/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Airflow: configuración de mi máquina y archivos que genera en tiempo de ejecución
+airflow/.env
+airflow/logs/
+airflow/config/
+airflow/plugins/

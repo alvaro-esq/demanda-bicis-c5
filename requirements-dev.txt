@@ -1,0 +1,4 @@
+# Herramientas de desarrollo: solo para el .venv local, no van a la imagen de Airflow.
+-r requirements.txt
+dvc==3.67.1
+pytest==9.2.0
