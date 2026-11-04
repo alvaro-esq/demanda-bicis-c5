@@ -133,6 +133,13 @@ def ejecutar(fecha: str) -> pathlib.Path: ...
 - Lo que depende de la máquina va en `airflow/.env`, que no se versiona; la
   plantilla es `airflow/.env.example`.
 - Cada paso del pipeline es una tarea del DAG y recibe `fecha = {{ ds }}`.
+- `dags/prediccion_diaria.py`: diario a las 06:00 UTC del 2012-01-01 al 2012-01-31
+  (`catchup=True`), cinco tareas en cadena que se pasan por XCom la ruta escrita. Solo
+  orquesta; la lógica está en `src/bicis/`.
+- Backfill (por ejemplo, de enero con 4 corridas a la vez): `airflow backfill create --dag-id
+  prediccion_diaria --from-date 2012-01-01 --to-date 2012-01-31T23:59:59
+  --max-active-runs 4`. El `--to-date` tiene que llegar hasta el final del día, porque
+  la corrida es a las 06:00.
 
 ## Dependencias y comandos
 
