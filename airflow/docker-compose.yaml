@@ -27,6 +27,7 @@
 #   - El repo se monta en /opt/proyecto (fuera de /opt/airflow) y, encima,
 #     fuente/ en solo lectura. Los DAGs se leen de /opt/proyecto/dags.
 #   - Menos paralelismo y un solo worker del api-server, para ahorrar memoria.
+#   - Se une a la red externa bicis-net para llegar a MLflow en http://mlflow:5000.
 #   - Lo que depende de la máquina (UID, ruta del repo, puerto, usuario) va en
 #     airflow/.env; la plantilla es airflow/.env.example.
 #
@@ -66,6 +67,8 @@ x-airflow-common:
     # Recursos de laptop.
     AIRFLOW__CORE__PARALLELISM: '4'
     AIRFLOW__API__WORKERS: '1'
+    # MLflow en la red bicis-net (docker/docker-compose.yml).
+    MLFLOW_TRACKING_URI: http://mlflow:5000
     # El paquete bicis y las rutas del proyecto (ver CLAUDE.md).
     PYTHONPATH: /opt/proyecto/src
     BICIS_PARAMS: /opt/proyecto/params.yaml
@@ -79,6 +82,10 @@ x-airflow-common:
     - ./config:/opt/airflow/config
     - ./plugins:/opt/airflow/plugins
   user: "${AIRFLOW_UID:-50000}:0"
+  # default: postgres. bicis-net: red compartida con MLflow (http://mlflow:5000).
+  networks:
+    - default
+    - bicis-net
   depends_on:
     &airflow-common-depends-on
     postgres:
@@ -257,3 +264,8 @@ services:
 
 volumes:
   postgres-db-volume:
+
+networks:
+  # La crea docker/docker-compose.yml (make mlflow-up), que hay que levantar antes.
+  bicis-net:
+    external: true
