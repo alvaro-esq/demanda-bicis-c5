@@ -7,7 +7,8 @@ rutas:
   fuente_db: fuente/bicis.db                    # BICIS_FUENTE_DB
   staging_dir: data/staging                     # BICIS_STAGING_DIR
   salidas_db: data/salidas/predicciones.db      # BICIS_SALIDAS_DB
-  modelo: models/modelo_rf.joblib               # BICIS_MODELO
+  modelo: models/modelo.joblib                  # BICIS_MODELO
+  metricas: metrics.json                        # BICIS_METRICAS
 
 fuente:
   csv_en_zip: hour.csv
@@ -15,7 +16,9 @@ fuente:
 
 modelo:
   objetivo: cnt
-  anio_entrenamiento: 2011
+  # Entrenamiento con enero-noviembre de 2011; MAE medido en diciembre de 2011.
+  entrenamiento: {desde: "2011-01-01", hasta: "2011-11-30"}
+  validacion: {desde: "2011-12-01", hasta: "2011-12-31"}
   features:
     - season
     - mnth
