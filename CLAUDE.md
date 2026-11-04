@@ -42,7 +42,8 @@ carpeta que contiene `params.yaml`, no desde el directorio de trabajo.
 | `BICIS_FUENTE_DB`   | `rutas.fuente_db`    | `fuente/bicis.db`              |
 | `BICIS_STAGING_DIR` | `rutas.staging_dir`  | `data/staging`                 |
 | `BICIS_SALIDAS_DB`  | `rutas.salidas_db`   | `data/salidas/predicciones.db` |
-| `BICIS_MODELO`      | `rutas.modelo`       | `models/modelo_rf.joblib`      |
+| `BICIS_MODELO`      | `rutas.modelo`       | `models/modelo.joblib`         |
+| `BICIS_METRICAS`    | `rutas.metricas`     | `metrics.json`                 |
 
 - La resolución de rutas vive en `src/bicis/config.py`, un módulo auxiliar que no es
   un paso del pipeline. Ningún módulo escribe rutas a mano ni lee `os.environ`
@@ -74,15 +75,17 @@ def ejecutar(fecha: str) -> pathlib.Path: ...
 | `extraer`     | `fuente/bicis.db` (filas de `fecha`)  | `data/staging/<fecha>/extraido.csv`      |
 | `limpiar`     | `extraido.csv`                        | `data/staging/<fecha>/limpio.csv`        |
 | `transformar` | `limpio.csv`                          | `data/staging/<fecha>/features.csv`      |
-| `predecir`    | `features.csv` + `models/modelo_rf.joblib` | `data/staging/<fecha>/predicciones.csv` |
+| `predecir`    | `features.csv` + `models/modelo.joblib` | `data/staging/<fecha>/predicciones.csv` |
 | `almacenar`   | `predicciones.csv`                    | `data/salidas/predicciones.db`           |
 
 ### Responsabilidades
 
 - **extraer**: selecciona las filas con `dteday = fecha`, pero solo las columnas que
   se conocen por la mañana: `dteday`, `hr` y las features de `params.yaml`. **No
-  extrae `cnt`, `casual` ni `registered`.** Si la fecha no tiene filas, lanza un error.
-- **limpiar**: tipos correctos, rangos válidos (`hr` 0–23, `weathersit` 1–4, `temp`,
+  extrae `cnt`, `casual` ni `registered`.** Si la fecha no tiene filas, escribe el
+  archivo solo con el encabezado: quien falla es `limpiar`.
+- **limpiar**: falla (`ValueError`) si el día no tiene filas. Revisa columnas (las que
+  faltan y las prohibidas), tipos, rangos válidos (`hr` 0–23, `weathersit` 1–4, `temp`,
   `atemp`, `hum` y `windspeed` en [0, 1]) y exactamente 24 filas, `hr` 0–23. Una hora
   que falta se agrega con las columnas de calendario del día y el clima de la hora
   vecina más cercana, y se marca con `hora_imputada = 1`.
@@ -99,9 +102,12 @@ def ejecutar(fecha: str) -> pathlib.Path: ...
 
 - `RandomForestRegressor` de scikit-learn para predecir `cnt`. Los hiperparámetros
   están en `params.yaml` → `modelo.random_forest`.
-- Se entrena **solo con 2011** (`dteday` de 2011-01-01 a 2011-12-31), leyendo de la
-  fuente. El entrenamiento vive en `scripts/entrenar.py` y produce
-  `models/modelo_rf.joblib`, versionado con DVC.
+- Se entrena con **enero a noviembre de 2011** y el MAE se mide en **diciembre de
+  2011** (`modelo.entrenamiento` y `modelo.validacion` en `params.yaml`), leyendo de la
+  fuente en solo lectura. El modelo que se guarda es el entrenado con enero–noviembre.
+- `scripts/entrenar.py` (`make entrenar`) produce `models/modelo.joblib`, versionado con
+  DVC, y `metrics.json` (en git), con el MAE de diciembre y el de una referencia
+  ingenua (promedio de entrenamiento por `workingday` y `hr`).
 - **Nunca usar `casual` ni `registered`**: ni como feature, ni para derivar features,
   ni para calcular el objetivo. Son los componentes de `cnt` (`cnt = casual +
   registered`), así que usarlos filtraría el objetivo. Las pruebas deben verificarlo.
@@ -111,8 +117,8 @@ def ejecutar(fecha: str) -> pathlib.Path: ...
 
 ## Versionado
 
-- git: código, `params.yaml`, `dvc.yaml`/`dvc.lock` y los archivos `.dvc`.
-- DVC: `models/`. Remoto por defecto `local` →
+- git: código, `params.yaml`, `metrics.json` y los archivos `.dvc`.
+- DVC: `models/modelo.joblib` (`dvc add` + `dvc push` después de reentrenar). Remoto por defecto `local` →
   `/home/andres/dvc-storage/demanda-bicis-c5`.
 - No se versionan: el `.zip`, `fuente/`, `data/` ni `.venv/` (todos se pueden
   regenerar).
@@ -133,11 +139,13 @@ def ejecutar(fecha: str) -> pathlib.Path: ...
 - `requirements.txt`: dependencias del pipeline, con versiones fijas y compatibles
   con las restricciones de Airflow 3.3.2 (Python 3.12). `requirements-dev.txt` agrega
   `dvc` y `pytest` para el `.venv`.
-- `make venv` · `make fuente` · `make test` · `make airflow-build` ·
+- `make venv` · `make fuente` · `make test` · `make entrenar` ·
+  `make pipeline FECHA=AAAA-MM-DD` · `make airflow-build` ·
   `make airflow-up` · `make airflow-down`
 
 ## Pruebas
 
-- pytest con datos sintéticos en `tmp_path`. Las pruebas no dependen de que exista
+- pytest con datos sintéticos en `tmp_path` (fixtures `entorno` y `modelo_entrenado` en
+  `tests/conftest.py`; `pyproject.toml` agrega `src/` al path). Las pruebas no dependen de que exista
   `fuente/bicis.db` ni el modelo real. Para apuntar a otras rutas, usan las variables
   `BICIS_*`.
